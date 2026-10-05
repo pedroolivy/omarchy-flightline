@@ -75,7 +75,7 @@ jobs:
       - name: Install Qt and Mesa
         run: |
           pacman -Syu --noconfirm --needed git python qt6-declarative qt6-shadertools \
-            mesa xorg-server-xvfb xorg-xauth ttf-dejavu
+            mesa xorg-server-xvfb xorg-xauth ttf-dejavu imagemagick
       - uses: actions/checkout@v7
       - name: Bakes match the current Qt
         env:
