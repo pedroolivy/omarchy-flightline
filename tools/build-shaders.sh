@@ -38,7 +38,13 @@ for src in "$@"; do
   fi
 done
 
+# shaders/sources.sha256 records the source each .qsb was baked from, so a check
+# (tests/repo) can tell when a source changed without a new bake.
+stamp=shaders/sources.sha256
+touch "$stamp"
 for src in "$@"; do
   "$QSB" --glsl "100es,120,150" --hlsl 50 --msl 12 -o "$src.qsb" "$src"
+  { grep -v "  $src\$" "$stamp" || true; sha256sum "$src"; } | sort -k 2 > "$stamp.tmp"
+  mv "$stamp.tmp" "$stamp"
   echo "baked $src.qsb"
 done
