@@ -548,9 +548,13 @@ test("a 9,400-aircraft world scan takes a few milliseconds", () => {
   const m = metaOf(rows)
   const run = () => S.scan(m, { lat: 51.47, lon: -0.45, altM: 0 }, 70, { sun: S.sunSubpoint(new Date()) })
   run()                                                  // warm-up: QML's JIT is warm after the first panel update
-  const t0 = performance.now()
-  const r = run()
-  const ms = performance.now() - t0
+  // Best of five: one sample on a busy machine (a CI runner) measures the machine.
+  let r = null, ms = Infinity
+  for (let k = 0; k < 5; k++) {
+    const t0 = performance.now()
+    r = run()
+    ms = Math.min(ms, performance.now() - t0)
+  }
   console.log(`     ${r.counts.sky} in sight, ${r.counts.incoming} incoming, ${r.counts.beyond} beyond, ${ms.toFixed(1)} ms`)
   assert.ok(ms < 60, `${ms} ms`)
 })
