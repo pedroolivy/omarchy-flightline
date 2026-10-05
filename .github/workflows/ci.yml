@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  model:
+    name: Model and sky (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+      - run: node tests/model.test.mjs
+      - run: node tests/sky.test.mjs
+
+  feed:
+    name: Feed helper (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      # The tests that need saved real answers (FLIGHTLINE_FIXTURES) are skipped:
+      # none is committed.
+      - run: python -B -m unittest discover -s tests/feed -v
+
+  repo:
+    name: Manifest, shaders and assets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.x"
+      - name: Install glslang
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends glslang-tools
+      - name: Repository checks
+        env:
+          FLIGHTLINE_REQUIRE_GLSLANG: "1"
+        run: python -B -m unittest discover -s tests/repo -v
+
+  shell:
+    name: Shell scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: shellcheck --version
+      - run: shellcheck flightline-locate tools/*.sh tests/offscreen/*.sh
+
+  render:
+    name: Offscreen renders (Arch Linux, Qt, llvmpipe)
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Install Qt and Mesa
+        run: |
+          pacman -Syu --noconfirm --needed git python qt6-declarative qt6-shadertools \
+            mesa xorg-server-xvfb xorg-xauth ttf-dejavu
+      - uses: actions/checkout@v7
+      - name: Bakes match the current Qt
+        env:
+          FLIGHTLINE_REQUIRE_QSB: "1"
+        run: python -B -m unittest -v test_repo.ShaderTest.test_bakes_match_a_fresh_bake
+        working-directory: tests/repo
+        continue-on-error: true
+      - name: Render the globe, aircraft and dead reckoning
+        shell: bash
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          OUT: ${{ github.workspace }}/renders
+          TIMEOUT: "60"
+        run: |
+          set -o pipefail
+          xvfb-run -a sh -c 'tests/offscreen/run.sh && tests/offscreen/aircraft.sh' 2>&1 | tee renders.log
+          if grep -E 'ReferenceError|TypeError|Cannot assign|is not a type|is not installed|failed to load|Did not load|^FAIL' renders.log; then
+            echo "::error::QML errors or failed checks in the offscreen renders"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: renders
+          path: |
+            renders/*.png
+            renders.log
+          if-no-files-found: ignore
