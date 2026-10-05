@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Locate this machine from nearby Wi-Fi access points, the way browsers do.
+#
+# Runs only when the user presses "Locate with Wi-Fi" in the Flightline panel.
+# It reads the access points NetworkManager already sees (no scan, no root),
+# drops networks that opted out of location services (SSID ending in _nomap
+# or _optout), and asks BeaconDB — a free, public-domain, Ichnaea-compatible
+# geolocation service — where they are. Nothing is stored or sent elsewhere.
+#
+# Prints BeaconDB's JSON answer: {"location":{"lat":..,"lng":..},"accuracy":..}
+# Exit codes: 2 no NetworkManager, 3 no usable access points, 4 lookup failed.
+
+set -euo pipefail
+umask 077
+
+endpoint="https://api.beacondb.net/v1/geolocate"
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+version=$(jq -r '.version // "dev"' "$script_dir/manifest.json" 2>/dev/null || echo dev)
+user_agent="Flightline/$version (+https://github.com/pedroolivy/omarchy-flightline)"
+
+command -v nmcli >/dev/null 2>&1 || { echo "NetworkManager (nmcli) is not available" >&2; exit 2; }
+
+# -t output escapes ':' inside fields as '\:'; turn those into a placeholder
+# before splitting, then restore them in the BSSID.
+access_points=$(
+  nmcli -t -f BSSID,SSID,SIGNAL,FREQ device wifi list --rescan no 2>/dev/null \
+    | sed 's/\\:/\x1f/g' \
+    | awk -F: '
+        {
+          bssid = $1; ssid = $2; signal = $3; freq = $4
+          gsub(/\x1f/, ":", bssid)
+          if (bssid !~ /^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$/) next
+          if (ssid ~ /_(nomap|optout)$/) next
+          if (signal !~ /^[0-9]+$/) next
+          gsub(/[^0-9]/, "", freq)
+          # NetworkManager reports signal quality in percent; Ichnaea wants dBm.
+          printf "%s %d %d\n", tolower(bssid), int(signal / 2) - 100, (freq == "" ? 0 : freq)
+        }' \
+    | sort -u -k1,1 \
+    | head -n 40
+)
+
+[[ -n $access_points ]] || { echo "No Wi-Fi networks in range" >&2; exit 3; }
+
+payload=$(
+  printf '%s\n' "$access_points" | jq -R -s -c '
+    split("\n") | map(select(length > 0) | split(" ")) |
+    { considerIp: true,
+      wifiAccessPoints: map({ macAddress: .[0], signalStrength: (.[1] | tonumber) }
+        + (if (.[2] | tonumber) > 0 then { frequency: (.[2] | tonumber) } else {} end)) }'
+)
+
+response=$(
+  curl --fail --silent --show-error --proto '=https' --max-time 10 \
+    --max-filesize 65536 --user-agent "$user_agent" \
+    --header 'Content-Type: application/json' --data "$payload" "$endpoint"
+) || { echo "Location lookup failed" >&2; exit 4; }
+
+printf '%s\n' "$response" | jq -e -c 'select(.location.lat != null and .location.lng != null)
+  | { location: { lat: .location.lat, lng: .location.lng }, accuracy: (.accuracy // null) }' \
+  || { echo "Location service could not place these networks" >&2; exit 4; }
