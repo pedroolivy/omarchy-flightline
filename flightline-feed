@@ -1,0 +1,640 @@
+#!/usr/bin/env python3
+"""flightline-feed: turn an ADS-B feed response into the files Flightline draws.
+
+Reads one adsb.lol / adsb.fi style response ({"ac": [...], "now": ms}) and
+writes, atomically, into --out-dir:
+
+  traffic.ppm   256x200 P6 data texture read by Aircraft.qml (see
+                docs/ARCHITECTURE.md, "Data texture")
+  meta.json     per-aircraft strings and numbers, index-aligned with the PPM
+
+then prints one line of JSON (the summary) on stdout. Standard library only.
+
+Exit codes: 0 ok, 2 bad input or arguments (stdout carries
+{"ok": false, "error": ...}), 3 output could not be written. An input file
+inside --out-dir (where Service.qml puts it) is deleted afterwards unless
+--keep-input is given; one anywhere else is never touched.
+"""
+
+import argparse
+import heapq
+import json
+import math
+import os
+import re
+import stat
+import sys
+import time
+
+DEG = math.pi / 180
+EARTH_RADIUS_KM = 6371.0088
+NM_KM = 1.852
+
+MAX_INPUT_BYTES = 16 * 1024 * 1024      # a whole-world answer is ~5 MB
+MAX_RECORDS = 50000                     # the world is ~10k; the rest is dropped unread
+TEX_WIDTH = 256
+TEX_ROWS_PER_BLOCK = 5
+TEX_BLOCKS = 40
+MAX_CAPACITY = TEX_WIDTH * TEX_BLOCKS
+EPOCH_LEAD_MS = 300000
+NEAREST_LIMIT = 8
+NEAREST_ANY_LIMIT = 5
+MAX_GS_CAP = 1000                       # kt; nothing that flies goes faster
+EMERGENCY_LIMIT = 24
+
+HEX_RE = re.compile(r"~?[0-9a-f]{6}")
+CALLSIGN_RE = re.compile(r"[A-Z0-9-]{1,8}")
+REG_RE = re.compile(r"[A-Z0-9-]{1,10}")
+TYPE_RE = re.compile(r"[A-Z0-9]{1,4}")
+SQUAWK_RE = re.compile(r"[0-7]{4}")
+CATEGORY_RE = re.compile(r"[A-D][0-7]")
+SOURCE_RE = re.compile(r"[A-Za-z0-9._-]{1,24}")
+# Control, bidi and other invisible format characters (same class as Model.js).
+CONTROL_RE = re.compile("[\x00-\x1f\x7f-\x9f\u061c\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]")
+
+FLAG_GROUND = 1
+FLAG_EMERGENCY = 2
+FLAG_MILITARY = 4
+
+GLYPH_JET = 0
+GLYPH_HEAVY = 1
+GLYPH_LIGHT = 2
+GLYPH_ROTOR = 3
+GLYPH_OTHER = 4
+GLYPH_GROUND = 5
+
+GLYPHS = {
+  "A1": GLYPH_LIGHT,
+  "A2": GLYPH_JET, "A3": GLYPH_JET,
+  "A4": GLYPH_HEAVY, "A5": GLYPH_HEAVY,
+  "A7": GLYPH_ROTOR,
+}
+
+
+class FeedError(Exception):
+  """A failure with a short reason and the exit code to report it with."""
+
+  def __init__(self, message, code=2):
+    Exception.__init__(self, message)
+    self.code = code
+
+
+# ---------------------------------------------------------------- numbers
+
+def clamp(value, low, high):
+  return low if value < low else (high if value > high else value)
+
+
+def rnd(value):
+  # Math.round semantics (halves go up); Python's round() goes to even.
+  return int(math.floor(value + 0.5))
+
+
+def finite(value):
+  return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def number_or(value, fallback):
+  kind = type(value)
+  if kind is float:
+    return value if math.isfinite(value) else fallback
+  if kind is int and -1e300 < value < 1e300:
+    return value
+  if isinstance(value, str):
+    text = value.strip()
+    if text == "" or "_" in text:
+      return fallback
+    try:
+      value = float(text)
+    except ValueError:
+      return fallback
+  try:
+    return value if finite(value) else fallback
+  except OverflowError:
+    return fallback
+
+
+def normalize_angle(deg):
+  return deg % 360
+
+
+def is_valid_lat_lon(lat, lon):
+  return finite(lat) and finite(lon) and -90 <= lat <= 90 and -180 <= lon <= 180
+
+
+# ---------------------------------------------------------- sanitising
+
+def clean_string(value, max_length, pattern=None):
+  if not isinstance(value, str):
+    return ""
+  # ASCII without control characters is the common case; skip the regex.
+  text = value if value.isascii() and value.isprintable() else CONTROL_RE.sub("", value)
+  text = text.strip()
+  if len(text) > max_length:
+    text = text[:max_length]
+  if pattern is not None and not pattern.fullmatch(text):
+    return ""
+  return text
+
+
+def js_string(value):
+  # String(x || "") for the fields that are normally strings.
+  if isinstance(value, str):
+    return value
+  if finite(value) and value:
+    return str(value)
+  return ""
+
+
+class Aircraft(object):
+  __slots__ = ("hex", "callsign", "registration", "type", "operator", "category",
+               "lat", "lon", "on_ground", "alt", "gs", "track", "vr", "squawk",
+               "emergency", "military", "seen", "flags", "index")
+
+
+def sanitize_aircraft(raw):
+  """Normalise one feed record like v0.1 Model.sanitizeAircraft.
+
+  Returns None for records that cannot be placed. Strings are validated
+  against the same patterns, so nothing unbounded or markup-like survives.
+  """
+  if not isinstance(raw, dict):
+    return None
+  hex_id = clean_string(raw.get("hex"), 7).lower()
+  if not HEX_RE.fullmatch(hex_id):
+    return None
+  lat = number_or(raw.get("lat"), math.nan)
+  lon = number_or(raw.get("lon"), math.nan)
+  if not is_valid_lat_lon(lat, lon):
+    return None
+
+  ac = Aircraft()
+  ac.hex = hex_id
+  ac.lat = lat
+  ac.lon = lon
+  ac.callsign = clean_string(js_string(raw.get("flight")).upper(), 8, CALLSIGN_RE)
+  ac.registration = clean_string(js_string(raw.get("r")).upper(), 10, REG_RE)
+  ac.type = clean_string(js_string(raw.get("t")).upper(), 4, TYPE_RE)
+  ac.operator = clean_string(raw.get("ownOp"), 48)
+  ac.category = clean_string(raw.get("category"), 2, CATEGORY_RE)
+
+  ac.on_ground = raw.get("alt_baro") == "ground"
+  if ac.on_ground:
+    ac.alt = -1
+  else:
+    alt = number_or(raw.get("alt_baro"), number_or(raw.get("alt_geom"), math.nan))
+    ac.alt = clamp(rnd(alt), -2000, 80000) if finite(alt) else None
+
+  ac.seen = clamp(number_or(raw.get("seen_pos"), number_or(raw.get("seen"), 0)), 0, 600)
+
+  gs = number_or(raw.get("gs"), math.nan)
+  ac.gs = clamp(gs, 0, 2500) if finite(gs) else None
+  track = number_or(raw.get("track"), number_or(raw.get("true_heading"), number_or(raw.get("mag_heading"), math.nan)))
+  ac.track = normalize_angle(track) if finite(track) else None
+  vr = number_or(raw.get("baro_rate"), number_or(raw.get("geom_rate"), math.nan))
+  ac.vr = clamp(rnd(vr), -20000, 20000) if finite(vr) else None
+
+  ac.squawk = clean_string(raw.get("squawk"), 4, SQUAWK_RE)
+  emergency = clean_string(raw.get("emergency"), 16)
+  ac.emergency = "" if emergency == "none" else emergency
+  ac.military = (int(number_or(raw.get("dbFlags"), 0)) & 1) == 1
+
+  flags = glyph_class(ac.category) << 3
+  if ac.on_ground:
+    flags |= FLAG_GROUND
+  if ac.squawk in ("7500", "7600", "7700") or ac.emergency != "":
+    flags |= FLAG_EMERGENCY
+  if ac.military:
+    flags |= FLAG_MILITARY
+  ac.flags = flags
+  ac.index = -1
+  return ac
+
+
+def glyph_class(category):
+  """ADS-B emitter category to the glyph class stored in the flag bits."""
+  glyph = GLYPHS.get(category)
+  if glyph is not None:
+    return glyph
+  if category[:1] == "B":
+    return GLYPH_OTHER
+  if category[:1] == "C":
+    return GLYPH_GROUND
+  return GLYPH_JET
+
+
+def parse_feed(data):
+  """Sanitised, de-duplicated aircraft of a whole response, plus how many
+  records were thrown away."""
+  if not isinstance(data, dict):
+    raise FeedError("invalid response")
+  rows = data.get("ac")
+  if not isinstance(rows, list):
+    rows = data.get("aircraft")
+  if not isinstance(rows, list):
+    raise FeedError("no aircraft list")
+  out = []
+  seen = set()
+  for raw in rows[:MAX_RECORDS]:
+    ac = sanitize_aircraft(raw)
+    if ac is None or ac.hex in seen:
+      continue
+    seen.add(ac.hex)
+    out.append(ac)
+  return out, len(rows) - len(out)
+
+
+# ------------------------------------------------------------- geodesy
+
+def distance_km(lat1, lon1, lat2, lon2):
+  p1 = lat1 * DEG
+  p2 = lat2 * DEG
+  dp = (lat2 - lat1) * DEG
+  dl = (lon2 - lon1) * DEG
+  a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+  return 2 * EARTH_RADIUS_KM * math.asin(min(1.0, math.sqrt(a)))
+
+
+def bearing_deg(lat1, lon1, lat2, lon2):
+  p1 = lat1 * DEG
+  p2 = lat2 * DEG
+  dl = (lon2 - lon1) * DEG
+  y = math.sin(dl) * math.cos(p2)
+  x = math.cos(p1) * math.sin(p2) - math.sin(p1) * math.cos(p2) * math.cos(dl)
+  return normalize_angle(math.atan2(y, x) / DEG)
+
+
+def unit_vector(lat, lon):
+  c = math.cos(lat * DEG)
+  return (c * math.cos(lon * DEG), c * math.sin(lon * DEG), math.sin(lat * DEG))
+
+
+# ------------------------------------------------------------ ordering
+
+def order_aircraft(aircraft, capacity, centre):
+  """Keep `capacity` aircraft, then order them for drawing: ground traffic
+  first, unknown altitude next, then ascending altitude (higher ones are
+  drawn on top). Over capacity, ground traffic goes first, farthest from
+  `centre` first, then airborne aircraft by the same rule."""
+  if len(aircraft) > capacity:
+    cx, cy, cz = unit_vector(centre[0], centre[1])
+
+    def keep_key(ac):
+      x, y, z = unit_vector(ac.lat, ac.lon)
+      return (0 if ac.on_ground else 1, x * cx + y * cy + z * cz)
+
+    aircraft = sorted(aircraft, key=keep_key, reverse=True)[:capacity]
+
+  def draw_key(ac):
+    if ac.on_ground:
+      return (0, 0)
+    if ac.alt is None:
+      return (1, 0)
+    return (2, ac.alt)
+
+  aircraft = sorted(aircraft, key=draw_key)
+  for i, ac in enumerate(aircraft):
+    ac.index = i
+  return aircraft
+
+
+# ----------------------------------------------------------- encoding
+
+def encode_ppm(aircraft, epoch_ms, fetched_ms):
+  """The 256x200 binary PPM described in the architecture document."""
+  header = b"P6\n%d %d\n255\n" % (TEX_WIDTH, TEX_BLOCKS * TEX_ROWS_PER_BLOCK)
+  pixels = bytearray(TEX_WIDTH * TEX_BLOCKS * TEX_ROWS_PER_BLOCK * 3)
+  for k, ac in enumerate(aircraft):
+    col = k & 255
+    base = (5 * (k >> 8) * TEX_WIDTH + col) * 3
+    stride = TEX_WIDTH * 3
+
+    lat = clamp(rnd((ac.lat + 90) / 180 * 16777215), 0, 16777215)
+    lon = clamp(rnd(((ac.lon + 180) % 360) / 360 * 16777215), 0, 16777215)
+    moving = ac.track is not None and ac.gs is not None
+    track = clamp(rnd(ac.track / 360 * 65535), 0, 65535) if ac.track is not None else 0
+    speed = min(65535, rnd(ac.gs * 16)) if moving else 0
+    band = 0 if ac.on_ground or ac.alt is None else clamp(rnd(ac.alt / 250), 0, 255)
+    observed = clamp(rnd(fetched_ms - ac.seen * 1000 - epoch_ms), 0, 16777215)
+
+    values = (lat, lon, (track << 8) | ac.flags, (speed << 8) | band, observed)
+    for row in range(5):
+      off = base + row * stride
+      pixels[off:off + 3] = values[row].to_bytes(3, "big")
+  return header + bytes(pixels)
+
+
+def moving_speed(ac):
+  return ac.gs if ac.track is not None and ac.gs is not None else 0
+
+
+def build_meta(aircraft, rev, epoch_ms, fetched_ms):
+  def one_decimal(ac):
+    return round(max(0.0, (fetched_ms - ac.seen * 1000 - epoch_ms) / 1000), 1)
+
+  return {
+    "rev": rev,
+    "epochMs": epoch_ms,
+    "n": len(aircraft),
+    "hex": [ac.hex for ac in aircraft],
+    "cs": [ac.callsign for ac in aircraft],
+    "ty": [ac.type for ac in aircraft],
+    "rg": [ac.registration for ac in aircraft],
+    "op": [ac.operator for ac in aircraft],
+    "lat": [round(ac.lat, 4) for ac in aircraft],
+    "lon": [round(ac.lon, 4) for ac in aircraft],
+    "alt": [ac.alt for ac in aircraft],
+    "gs": [None if ac.gs is None else round(ac.gs, 1) for ac in aircraft],
+    "trk": [None if ac.track is None else round(ac.track, 2) for ac in aircraft],
+    "t": [one_decimal(ac) for ac in aircraft],
+    "vr": [ac.vr for ac in aircraft],
+    "sq": [ac.squawk for ac in aircraft],
+    "cat": [ac.category for ac in aircraft],
+    "flags": [ac.flags for ac in aircraft],
+  }
+
+
+def nearest_row(ac, km, lat, lon):
+  return {
+    "i": ac.index, "hex": ac.hex, "cs": ac.callsign, "ty": ac.type,
+    "rg": ac.registration, "op": ac.operator,
+    "lat": round(ac.lat, 4), "lon": round(ac.lon, 4), "alt": ac.alt,
+    "gs": None if ac.gs is None else round(ac.gs),
+    "trk": None if ac.track is None else round(ac.track),
+    "vr": ac.vr,
+    "km": round(km, 1), "brg": round(bearing_deg(lat, lon, ac.lat, ac.lon), 1),
+  }
+
+
+def home_stats(aircraft, lat, lon, radius_nm):
+  """Airborne count within the radius and the closest few, closest first.
+  When none is inside, `nearestAny` holds the closest few at any distance,
+  so the panel never has to read meta.json for its list."""
+  radius_km = radius_nm * NM_KM
+  # One degree of latitude is at least 111 km; a cheap pre-filter.
+  lat_span = radius_km / 111.0 + 0.01
+  rows = []
+  for ac in aircraft:
+    if ac.on_ground or abs(ac.lat - lat) > lat_span:
+      continue
+    km = distance_km(lat, lon, ac.lat, ac.lon)
+    if km <= radius_km:
+      rows.append((km, ac))
+  rows.sort(key=lambda row: row[0])
+  any_rows = []
+  if not rows:
+    # Closest = largest dot product; distances only for the winners.
+    hx, hy, hz = unit_vector(lat, lon)
+
+    def closeness(ac):
+      x, y, z = unit_vector(ac.lat, ac.lon)
+      return x * hx + y * hy + z * hz
+
+    airborne = (ac for ac in aircraft if not ac.on_ground)
+    closest = heapq.nlargest(NEAREST_ANY_LIMIT, airborne, key=closeness)
+    any_rows = [(distance_km(lat, lon, ac.lat, ac.lon), ac) for ac in closest]
+  return {
+    "lat": lat,
+    "lon": lon,
+    "radiusNm": radius_nm,
+    "count": len(rows),
+    "nearest": [nearest_row(ac, km, lat, lon) for km, ac in rows[:NEAREST_LIMIT]],
+    "nearestAny": [nearest_row(ac, km, lat, lon) for km, ac in any_rows],
+  }
+
+
+def robust_max_gs(airborne):
+  """The speed the idle clock is paced by: the 99.5th percentile of the
+  moving aircraft (the true maximum below ~100 of them), capped, so one bad
+  report cannot speed up every tick."""
+  speeds = sorted(moving_speed(ac) for ac in airborne if moving_speed(ac) > 0)
+  if not speeds:
+    return 0
+  return rnd(min(MAX_GS_CAP, speeds[rnd(0.995 * (len(speeds) - 1))]))
+
+
+def build_summary(aircraft, args, fetched_ms, epoch_ms, dropped):
+  airborne = [ac for ac in aircraft if not ac.on_ground]
+  emergencies = [{
+    "i": ac.index, "hex": ac.hex, "cs": ac.callsign, "sq": ac.squawk,
+    "lat": round(ac.lat, 4), "lon": round(ac.lon, 4), "alt": ac.alt,
+  } for ac in aircraft if ac.flags & FLAG_EMERGENCY][:EMERGENCY_LIMIT]
+  query = None
+  if args.query is not None:
+    query = {"lat": args.query[0], "lon": args.query[1], "radiusNm": args.query[2]}
+  home = None
+  if args.home is not None:
+    home = home_stats(aircraft, args.home[0], args.home[1], args.radius)
+  return {
+    "ok": True,
+    "rev": args.rev,
+    "source": args.source,
+    "epochMs": epoch_ms,
+    "fetchedMs": fetched_ms,
+    "n": len(aircraft),
+    "airborne": len(airborne),
+    "dropped": dropped,
+    "query": query,
+    "home": home,
+    "emergencies": emergencies,
+    "maxGs": robust_max_gs(airborne),
+  }
+
+
+# ------------------------------------------------------------- files
+
+def read_input(path):
+  try:
+    fd = os.open(path, os.O_RDONLY | os.O_CLOEXEC)
+  except OSError as e:
+    raise FeedError("cannot read input: " + (e.strerror or "error"))
+  try:
+    info = os.fstat(fd)
+    if not stat.S_ISREG(info.st_mode):
+      raise FeedError("input is not a file")
+    if info.st_size > MAX_INPUT_BYTES:
+      raise FeedError("input too large")
+    with os.fdopen(fd, "rb", closefd=False) as handle:
+      data = handle.read(MAX_INPUT_BYTES + 1)
+  except OSError as e:
+    raise FeedError("cannot read input: " + (e.strerror or "error"))
+  finally:
+    os.close(fd)
+  if len(data) > MAX_INPUT_BYTES:
+    raise FeedError("input too large")
+  return data
+
+
+def open_out_dir(path):
+  """File descriptor of the output directory: created 0700, never a symlink,
+  owned by us."""
+  try:
+    try:
+      os.mkdir(path, 0o700)
+    except FileExistsError:
+      pass
+    except FileNotFoundError:
+      os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+      os.mkdir(path, 0o700)
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+  except OSError as e:
+    raise FeedError("cannot open out dir: " + (e.strerror or "error"), 3)
+  info = os.fstat(fd)
+  if info.st_uid != os.geteuid():
+    os.close(fd)
+    raise FeedError("out dir not owned by user", 3)
+  if info.st_mode & 0o077:
+    os.fchmod(fd, 0o700)
+  return fd
+
+
+def write_atomic(dir_fd, name, payload):
+  """Write payload to a private temp file next to `name` and rename it over
+  `name`. The rename replaces a symlink rather than following it."""
+  tmp = ".%s.%d.tmp" % (name, os.getpid())
+  fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=dir_fd)
+  try:
+    with os.fdopen(fd, "wb") as handle:
+      handle.write(payload)
+    os.replace(tmp, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+  except BaseException:
+    try:
+      os.unlink(tmp, dir_fd=dir_fd)
+    except OSError:
+      pass
+    raise
+
+
+# ----------------------------------------------------------- arguments
+
+class Parser(argparse.ArgumentParser):
+  def error(self, message):
+    raise FeedError("bad arguments: " + message)
+
+
+def float_list(count):
+  def parse(text):
+    parts = text.split(",")
+    if len(parts) != count:
+      raise argparse.ArgumentTypeError("expected %d comma separated numbers" % count)
+    try:
+      values = [float(p) for p in parts]
+    except ValueError:
+      raise argparse.ArgumentTypeError("not a number")
+    if not all(math.isfinite(v) for v in values):
+      raise argparse.ArgumentTypeError("not finite")
+    if not is_valid_lat_lon(values[0], values[1]):
+      raise argparse.ArgumentTypeError("latitude/longitude out of range")
+    if count == 3 and values[2] <= 0:
+      raise argparse.ArgumentTypeError("radius must be positive")
+    return values
+  return parse
+
+
+def positive_float(text):
+  value = float(text)
+  if not math.isfinite(value) or value <= 0:
+    raise argparse.ArgumentTypeError("must be positive")
+  return value
+
+
+def parse_args(argv):
+  parser = Parser(prog="flightline-feed", description="ADS-B feed JSON to Flightline texture, meta and summary")
+  parser.add_argument("--in", dest="input", required=True, metavar="RAW.json")
+  parser.add_argument("--out-dir", required=True, metavar="DIR")
+  parser.add_argument("--rev", required=True, type=int)
+  parser.add_argument("--source", required=True)
+  parser.add_argument("--home", type=float_list(2), metavar="LAT,LON")
+  parser.add_argument("--radius", type=positive_float, metavar="NM")
+  parser.add_argument("--query", type=float_list(3), metavar="LAT,LON,NM")
+  parser.add_argument("--capacity", type=int, default=MAX_CAPACITY)
+  parser.add_argument("--fetched-ms", type=int, metavar="MS", help="when the request went out (default: now)")
+  parser.add_argument("--keep-input", action="store_true", help="do not delete the input file")
+  args = parser.parse_args(argv)
+  if args.rev < 0:
+    raise FeedError("bad arguments: --rev must be >= 0")
+  if args.home is not None and args.radius is None:
+    raise FeedError("bad arguments: --home needs --radius")
+  if not 0 <= args.capacity <= MAX_CAPACITY:
+    raise FeedError("bad arguments: --capacity must be 0..%d" % MAX_CAPACITY)
+  if not SOURCE_RE.fullmatch(args.source):
+    args.source = "unknown"
+  return args
+
+
+# ---------------------------------------------------------------- main
+
+def process(args, fetched_ms):
+  """Run one conversion; returns the summary dict. Raises FeedError."""
+  raw = read_input(args.input)
+  try:
+    data = json.loads(raw)
+  except (ValueError, RecursionError):
+    raise FeedError("invalid response")
+  aircraft, dropped = parse_feed(data)
+
+  if args.query is not None:
+    centre = args.query
+  elif args.home is not None:
+    centre = args.home
+  else:
+    centre = (0.0, 0.0)
+  total = len(aircraft)
+  aircraft = order_aircraft(aircraft, args.capacity, centre)
+  dropped += total - len(aircraft)
+
+  epoch_ms = fetched_ms - EPOCH_LEAD_MS
+  ppm = encode_ppm(aircraft, epoch_ms, fetched_ms)
+  meta = json.dumps(build_meta(aircraft, args.rev, epoch_ms, fetched_ms), separators=(",", ":")).encode("ascii")
+  summary = build_summary(aircraft, args, fetched_ms, epoch_ms, dropped)
+
+  dir_fd = open_out_dir(args.out_dir)
+  try:
+    # The texture goes last: it is what makes the new revision visible.
+    write_atomic(dir_fd, "meta.json", meta)
+    write_atomic(dir_fd, "traffic.ppm", ppm)
+  except OSError as e:
+    raise FeedError("cannot write output: " + (e.strerror or "error"), 3)
+  finally:
+    os.close(dir_fd)
+  return summary
+
+
+def remove_input(path, out_dir):
+  """Delete the raw answer, but only where Service.qml puts it: a regular
+  file directly inside the out dir. Anything else is someone's file."""
+  try:
+    if os.path.realpath(os.path.dirname(os.path.abspath(path))) != os.path.realpath(out_dir):
+      return
+    if stat.S_ISREG(os.lstat(path).st_mode):
+      os.unlink(path)
+  except OSError:
+    pass
+
+
+def main(argv=None):
+  args = None
+  try:
+    args = parse_args(sys.argv[1:] if argv is None else argv)
+    now_ms = int(time.time() * 1000)
+    # The request start is closer to the feed's own clock than "now" after a
+    # long download; never later than now.
+    fetched_ms = now_ms if args.fetched_ms is None else clamp(args.fetched_ms, now_ms - 120000, now_ms)
+    summary = process(args, fetched_ms)
+    code = 0
+  except FeedError as e:
+    summary = {"ok": False, "error": str(e)}
+    code = e.code
+  except Exception:
+    # Garbage in must never become a traceback.
+    summary = {"ok": False, "error": "unexpected failure"}
+    code = 2
+  sys.stdout.write(json.dumps(summary, separators=(",", ":")) + "\n")
+  sys.stdout.flush()
+  if args is not None and not args.keep_input:
+    remove_input(args.input, args.out_dir)
+  return code
+
+
+if __name__ == "__main__":
+  sys.exit(main())
