@@ -1,0 +1,142 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.pedroolivy.flightline",
+  "name": "Flightline",
+  "version": "2.1.0",
+  "author": "Pedro S. Oliveira",
+  "license": "MIT",
+  "description": "The whole world's air traffic on a GPU globe that follows your Omarchy theme: shaded relief, sea-floor depth, sunlight and trails. Counts the aircraft over your weather location, follows any flight with its route and ETA, and shows what is in your sky, Sun, Moon and planets included.",
+  "homepage": "https://github.com/pedroolivy/omarchy-flightline",
+  "repository": "https://github.com/pedroolivy/omarchy-flightline",
+  "keywords": [
+    "aircraft",
+    "flights",
+    "adsb",
+    "globe",
+    "radar",
+    "aviation"
+  ],
+  "kinds": [
+    "service",
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Flightline",
+    "description": "Aircraft overhead in the bar; opens the live traffic globe",
+    "category": "Info",
+    "aliases": [
+      "flightline",
+      "flights",
+      "planes",
+      "aircraft",
+      "adsb"
+    ],
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "nearbyRadiusNm": 100,
+      "units": "auto",
+      "feedSource": "adsb.lol",
+      "wideQueries": true,
+      "showLabels": true,
+      "showGraticule": true,
+      "showNight": true,
+      "showLights": true,
+      "showRelief": true,
+      "showTrails": true,
+      "showStars": true
+    },
+    "schema": [
+      {
+        "key": "nearbyRadiusNm",
+        "type": "integer",
+        "label": "Bar radius (nautical miles)",
+        "min": 5,
+        "max": 250,
+        "step": 5,
+        "defaultValue": 100,
+        "description": "The bar counts aircraft in the air within this distance of your location."
+      },
+      {
+        "key": "units",
+        "type": "enum",
+        "label": "Units",
+        "options": [
+          "auto",
+          "metric",
+          "imperial",
+          "aviation"
+        ],
+        "defaultValue": "auto",
+        "description": "auto follows your locale. aviation uses feet, knots and nautical miles."
+      },
+      {
+        "key": "feedSource",
+        "type": "enum",
+        "label": "ADS-B source",
+        "options": [
+          "adsb.lol",
+          "adsb.fi"
+        ],
+        "defaultValue": "adsb.lol",
+        "description": "Free community feeds. The other one takes over automatically when the preferred one fails. adsb.fi only answers circles up to 250 NM, so the world view needs adsb.lol."
+      },
+      {
+        "key": "wideQueries",
+        "type": "boolean",
+        "label": "Wide queries",
+        "defaultValue": true,
+        "description": "Lets the open panel ask adsb.lol for circles wider than its documented 250 NM, up to the whole world in one request. Turn off to keep every request within 250 NM."
+      },
+      {
+        "key": "showLabels",
+        "type": "boolean",
+        "label": "Callsign and city labels",
+        "defaultValue": true
+      },
+      {
+        "key": "showGraticule",
+        "type": "boolean",
+        "label": "Latitude and longitude grid",
+        "defaultValue": true
+      },
+      {
+        "key": "showNight",
+        "type": "boolean",
+        "label": "Shade the night side",
+        "defaultValue": true
+      },
+      {
+        "key": "showLights",
+        "type": "boolean",
+        "label": "City lights at night",
+        "defaultValue": true
+      },
+      {
+        "key": "showRelief",
+        "type": "boolean",
+        "label": "Relief and sea depth",
+        "defaultValue": true,
+        "description": "Shaded mountains, snow and ice, and the depth of the sea floor. Off draws the flat v2.0 globe."
+      },
+      {
+        "key": "showTrails",
+        "type": "boolean",
+        "label": "Aircraft trails",
+        "defaultValue": true,
+        "description": "A short fading tail behind every aircraft in the air, along its heading."
+      },
+      {
+        "key": "showStars",
+        "type": "boolean",
+        "label": "Stars around the globe",
+        "defaultValue": true,
+        "description": "Faint, still stars around the Earth. Dark themes only."
+      }
+    ]
+  }
+}
