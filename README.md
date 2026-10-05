@@ -91,7 +91,7 @@ two temporary files on tmpfs.
 ## Dependencies
 
 All ship with Omarchy: `curl`, `jq`, `python3` (standard library), `timedatectl`
-and, for the optional Wi-Fi lookup, `nmcli`. Shaders come prebuilt; no `sudo`.
+and, for the optional Wi-Fi lookup, `nmcli`. Shaders come prebuilt; nothing runs as root.
 
 ## Development
 
