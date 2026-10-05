@@ -416,19 +416,19 @@ class OrderingAndCapacityTest(unittest.TestCase):
 
   def test_capacity_keeps_closest_to_query_centre(self):
     rows = [plane("%06x" % (i + 1), lat=i * 0.5, lon=0, alt_baro=10000 + i) for i in range(40)]
-    summary, ppm, meta = convert(rows, extra_args=["--capacity", "10", "--query", "0,0,3000"])
+    summary, ppm, meta = convert(rows, extra_args=["--capacity", "10", "--query=0,0,3000"])
     self.assertEqual(meta["n"], 10)
     self.assertEqual(summary["n"], 10)
     self.assertEqual(summary["dropped"], 30)
     self.assertEqual(sorted(meta["lat"]), [i * 0.5 for i in range(10)])
     # Centred elsewhere, a different set survives.
-    _, _, meta = convert(rows, extra_args=["--capacity", "10", "--query", "19.5,0,3000"])
+    _, _, meta = convert(rows, extra_args=["--capacity", "10", "--query=19.5,0,3000"])
     self.assertEqual(sorted(meta["lat"]), [i * 0.5 for i in range(30, 40)])
 
   def test_capacity_drops_ground_traffic_first(self):
     rows = [plane("%06x" % (i + 1), lat=i * 0.5, lon=0, alt_baro=10000 + i) for i in range(10)]
     rows += [plane("%06x" % (i + 100), lat=0.1 * i, lon=0, alt_baro="ground") for i in range(5)]
-    summary, _, meta = convert(rows, extra_args=["--capacity", "12", "--query", "0,0,3000"])
+    summary, _, meta = convert(rows, extra_args=["--capacity", "12", "--query=0,0,3000"])
     self.assertEqual(summary["airborne"], 10, "every airborne aircraft is kept")
     self.assertEqual(meta["alt"].count(-1), 2, "the two ground aircraft closest to the centre stay")
     self.assertEqual(sorted(meta["hex"][:2]), ["000064", "000065"])
@@ -441,7 +441,7 @@ class OrderingAndCapacityTest(unittest.TestCase):
 
   def test_capacity_wraps_around_the_antimeridian(self):
     rows = [plane("000001", lat=0, lon=179), plane("000002", lat=0, lon=-179), plane("000003", lat=0, lon=0)]
-    _, _, meta = convert(rows, extra_args=["--capacity", "2", "--query", "0,180,500"])
+    _, _, meta = convert(rows, extra_args=["--capacity", "2", "--query=0,180,500"])
     self.assertEqual(sorted(meta["hex"]), ["000001", "000002"])
 
   def test_default_capacity_is_the_texture_size(self):
@@ -470,7 +470,7 @@ class SummaryTest(unittest.TestCase):
       plane("000005", lat=12.0, lon=20.0, alt_baro=10000),                        # ~222 km: outside 100 NM
       plane("000006", lat=9.4, lon=20.0, alt_baro=None),                          # ~66.7 km south; unknown alt counts as airborne
     ]
-    summary, _, meta = convert(rows, extra_args=["--home", "10,20", "--radius", "100"])
+    summary, _, meta = convert(rows, extra_args=["--home=10,20", "--radius=100"])
     h = summary["home"]
     self.assertEqual((h["lat"], h["lon"], h["radiusNm"]), (10, 20, 100))
     self.assertEqual(h["count"], 4)
@@ -492,7 +492,7 @@ class SummaryTest(unittest.TestCase):
 
   def test_nearest_is_limited_to_eight(self):
     rows = [plane("%06x" % (i + 1), lat=10 + i * 0.01, lon=20) for i in range(30)]
-    summary, _, _ = convert(rows, extra_args=["--home", "10,20", "--radius", "250"])
+    summary, _, _ = convert(rows, extra_args=["--home=10,20", "--radius=250"])
     self.assertEqual(summary["home"]["count"], 30)
     self.assertEqual(len(summary["home"]["nearest"]), 8)
     kms = [n["km"] for n in summary["home"]["nearest"]]
@@ -500,7 +500,7 @@ class SummaryTest(unittest.TestCase):
 
   def test_radius_edge_across_the_antimeridian(self):
     rows = [plane("000001", lat=0, lon=-179.9), plane("000002", lat=0, lon=-175)]
-    summary, _, _ = convert(rows, extra_args=["--home", "0,179.9", "--radius", "50"])
+    summary, _, _ = convert(rows, extra_args=["--home=0,179.9", "--radius=50"])
     self.assertEqual([n["hex"] for n in summary["home"]["nearest"]], ["000001"])
     self.assertAlmostEqual(summary["home"]["nearest"][0]["km"], 22.2, delta=0.2)
     self.assertAlmostEqual(summary["home"]["nearest"][0]["brg"], 90, delta=0.5)
@@ -513,7 +513,7 @@ class SummaryTest(unittest.TestCase):
                                     "query", "home", "emergencies", "maxGs"})
 
   def test_query_basics_and_times(self):
-    summary, _, meta = convert([plane()], rev=12, extra_args=["--query", "0,0,10800"])
+    summary, _, meta = convert([plane()], rev=12, extra_args=["--query=0,0,10800"])
     self.assertEqual(summary["query"], {"lat": 0, "lon": 0, "radiusNm": 10800})
     self.assertEqual(summary["rev"], 12)
     self.assertEqual(summary["source"], "adsb.lol")
@@ -541,12 +541,12 @@ class SummaryTest(unittest.TestCase):
   def test_nearest_any_when_nothing_is_inside(self):
     rows = [plane("000001", lat=10, lon=20), plane("000002", lat=12, lon=20),
             plane("000003", lat=0, lon=0, alt_baro="ground"), plane("000004", lat=40, lon=20)]
-    summary, _, _ = convert(rows, extra_args=["--home", "0,0", "--radius", "50"])
+    summary, _, _ = convert(rows, extra_args=["--home=0,0", "--radius=50"])
     h = summary["home"]
     self.assertEqual(h["count"], 0)
     self.assertEqual([r["hex"] for r in h["nearestAny"]], ["000001", "000002", "000004"], "airborne only, closest first")
     self.assertGreater(h["nearestAny"][0]["km"], 2000)
-    summary, _, _ = convert(rows, extra_args=["--home", "10,20", "--radius", "50"])
+    summary, _, _ = convert(rows, extra_args=["--home=10,20", "--radius=50"])
     self.assertEqual(summary["home"]["nearestAny"], [], "only when the circle is empty")
 
   def test_emergencies(self):
@@ -568,7 +568,7 @@ class SummaryTest(unittest.TestCase):
   def test_summary_stays_small(self):
     rows = [plane("%06x" % (i + 1), lat=10 + i * 0.001, squawk="7700", flight="LONGCS%d" % (i % 10), ownOp="Op" * 24)
             for i in range(200)]
-    summary, _, _ = convert(rows, extra_args=["--home", "10,20", "--radius", "250", "--query", "10,20,250"])
+    summary, _, _ = convert(rows, extra_args=["--home=10,20", "--radius=250", "--query=10,20,250"])
     self.assertLess(len(json.dumps(summary, separators=(",", ":"))), 8192)
     self.assertEqual(len(summary["emergencies"]), ff.EMERGENCY_LIMIT)
 
@@ -614,7 +614,7 @@ class CliTest(unittest.TestCase):
 
   def test_success_end_to_end(self):
     path = self.write_raw({"ac": [plane("000001", lat=-23.9, lon=133.8, flight="QFA1492 ")], "now": 1}, inside=True)
-    code, summary, _ = self.feed(path, "--home", "-23.7,133.88", "--radius", "100", "--query", "-23.7,133.88,250")
+    code, summary, _ = self.feed(path, "--home=-23.7,133.88", "--radius=100", "--query=-23.7,133.88,250")
     self.assertEqual(code, 0)
     self.assertTrue(summary["ok"])
     self.assertEqual(summary["home"]["nearest"][0]["cs"], "QFA1492")
@@ -696,9 +696,9 @@ class CliTest(unittest.TestCase):
   def test_bad_arguments_exit_2_with_json(self):
     path = self.write_raw({"ac": []})
     base = ["--in", path, "--out-dir", self.out, "--rev", "1", "--source", "x"]
-    for extra in (["--home", "1,2"], ["--home", "95,2", "--radius", "5"], ["--home", "a,b", "--radius", "5"],
-                  ["--radius", "-1"], ["--query", "1,2"], ["--query", "1,2,0"], ["--capacity", "-1"],
-                  ["--capacity", "x"], ["--bogus"], ["--home", "nan,2", "--radius", "5"]):
+    for extra in (["--home=1,2"], ["--home=95,2", "--radius=5"], ["--home=a,b", "--radius=5"],
+                  ["--radius=-1"], ["--query=1,2"], ["--query=1,2,0"], ["--capacity", "-1"],
+                  ["--capacity", "x"], ["--bogus"], ["--home=nan,2", "--radius=5"]):
       code, summary, _ = run_cli(base + extra)
       self.assertEqual(code, 2, extra)
       self.assertFalse(summary["ok"], extra)
@@ -766,7 +766,7 @@ class CliTest(unittest.TestCase):
 
   def test_stdout_is_one_line(self):
     proc = subprocess.run([SCRIPT, "--in", self.write_raw({"ac": [plane()]}), "--out-dir", self.out, "--rev", "1",
-                           "--source", "x", "--home", "10,20", "--radius", "100"], capture_output=True, text=True)
+                           "--source", "x", "--home=10,20", "--radius=100"], capture_output=True, text=True)
     self.assertEqual(proc.stdout.count("\n"), 1)
     self.assertEqual(proc.stderr, "")
 
@@ -800,7 +800,7 @@ class PerformanceTest(unittest.TestCase):
       for _ in range(3):
         start = time.perf_counter()
         code, summary, _ = run_cli(["--in", path, "--out-dir", os.path.join(tmp, "o"), "--rev", "1", "--source", "adsb.lol",
-                                    "--home", "-23.7,133.88", "--radius", "100", "--query", "0,0,10800", "--keep-input"])
+                                    "--home=-23.7,133.88", "--radius=100", "--query=0,0,10800", "--keep-input"])
         elapsed = time.perf_counter() - start
         self.assertEqual(code, 0)
         best = elapsed if best is None else min(best, elapsed)
@@ -839,7 +839,7 @@ class PerformanceTest(unittest.TestCase):
   def test_real_world_decodes_back_to_the_input(self):
     with open(os.path.join(FIXTURES, "world.json")) as handle:
       rows = json.load(handle)["ac"]
-    summary, ppm, meta = convert(rows, extra_args=["--query", "0,0,10800"])
+    summary, ppm, meta = convert(rows, extra_args=["--query=0,0,10800"])
     slots = decode_ppm(ppm)
     expected = {}
     for raw in rows:
