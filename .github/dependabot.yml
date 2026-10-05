@@ -1,0 +1,15 @@
+# Flightline has no package dependencies (Python standard library, Qt and the
+# Omarchy shell only), so the GitHub Actions used by CI are all there is to keep
+# current.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+      include: scope
+    groups:
+      actions:
+        patterns: ["*"]
