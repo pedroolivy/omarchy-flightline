@@ -1,5 +1,7 @@
 # Flightline
 
+![Flightline: live air traffic on a GPU globe](preview.webp)
+
 The whole world's air traffic on a GPU globe, right in the Omarchy bar.
 
 A small plane in the bar counts the aircraft flying near you. Click it and a
