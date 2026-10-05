@@ -451,7 +451,7 @@ Panel {
     var what = r ? r.origin.code + "→" + r.destination.code : (row.ty || "")
     return { i: i, hex: row.hex, cs: row.cs, lat: row.lat, lon: row.lon,
              text: [Model.displayName(ac), what].filter(function(s) { return s }).join("  ")
-               + "  ·  " + Model.formatAltitude(ac, units),
+               + " · " + Model.formatAltitude(ac, units),
              where: Model.formatDistance(km, units) + " " + Model.compassPoint(brg) }
   }
 
@@ -879,8 +879,8 @@ Panel {
                     horizontalPadding: Style.space(6)
                     selected: index === root.suggestionIndex
                     iconText: "󰀝"
-                    text: Model.displayName(modelData) + (modelData.type ? "  ·  " + modelData.type : "")
-                      + "  ·  " + Model.formatAltitude(modelData, root.units)
+                    text: Model.displayName(modelData) + (modelData.type ? " · " + modelData.type : "")
+                      + " · " + Model.formatAltitude(modelData, root.units)
                     tooltipText: "Track and follow this flight"
                     onClicked: root.pickFlight(modelData)
                   }
@@ -909,7 +909,7 @@ Panel {
                     horizontalPadding: Style.space(6)
                     selected: index + root.flightRows.length === root.suggestionIndex
                     iconText: root.searchMode === "home" ? "󰋜" : "󰍎"
-                    text: modelData.name + (modelData.detail ? "  ·  " + modelData.detail : "")
+                    text: modelData.name + (modelData.detail ? " · " + modelData.detail : "")
                     onClicked: root.pickPlace(modelData)
                   }
                 }
@@ -1175,8 +1175,8 @@ Panel {
                     leftAlign: true
                     clip: true
                     horizontalPadding: Style.space(6)
-                    text: modelData.name + "  ·  " + Math.round(modelData.maxEl) + "° " + Model.compassPoint(modelData.maxAz)
-                      + "  ·  " + Model.formatSoon(modelData.tMaxS) + (modelData.sunlit ? "  ·  sunlit" : "")
+                    text: modelData.name + " · " + Math.round(modelData.maxEl) + "° " + Model.compassPoint(modelData.maxAz)
+                      + " · " + Model.formatSoon(modelData.tMaxS) + (modelData.sunlit ? "  ·  sunlit" : "")
                     onClicked: root.selectIndex(modelData.i)
                   }
                 }
@@ -1199,7 +1199,7 @@ Panel {
                     leftAlign: true
                     clip: true
                     horizontalPadding: Style.space(6)
-                    text: modelData.name + "  ·  " + Model.formatDistance(modelData.km, root.units) + " " + Model.compassPoint(modelData.brg)
+                    text: modelData.name + " · " + Model.formatDistance(modelData.km, root.units) + " " + Model.compassPoint(modelData.brg)
                     onClicked: root.selectIndex(modelData.i)
                   }
                 }
@@ -1226,7 +1226,7 @@ Panel {
                     clip: true
                     horizontalPadding: Style.space(6)
                     selected: index === root.cursorIndex
-                    text: modelData.text + "  ·  " + modelData.where
+                    text: modelData.text + " · " + modelData.where
                     onClicked: {
                       root.cursorIndex = index
                       root.selectAndShow(modelData.i, modelData.lat, modelData.lon, modelData.hex)
