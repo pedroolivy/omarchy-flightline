@@ -1,0 +1,11 @@
+{"now": 1000300000, "msg": "aircraft-checks.qml: trails at the antimeridian and the limb, none without speed or on the ground, stale ones fading", "ac": [
+{"hex": "000001", "category": "A3", "lat": 10.0, "lon": 179.995, "alt_baro": 35000, "gs": 480.0, "track": 90.0, "seen_pos": 0},
+{"hex": "000002", "category": "A3", "lat": 10.05, "lon": -179.995, "alt_baro": 35000, "gs": 480.0, "track": 270.0, "seen_pos": 0},
+{"hex": "000003", "category": "A3", "lat": 9.95, "lon": 179.97, "alt_baro": 12000, "gs": 300.0, "seen_pos": 0},
+{"hex": "000004", "category": "A3", "lat": 9.92, "lon": -179.97, "alt_baro": "ground", "gs": 18.0, "track": 90.0, "seen_pos": 0},
+{"hex": "000005", "category": "A3", "lat": 9.97, "lon": 179.97, "alt_baro": 30000, "gs": 450.0, "track": 0.0, "seen_pos": 75},
+{"hex": "000006", "category": "A3", "lat": 10.12, "lon": -179.97, "alt_baro": 30000, "gs": 450.0, "track": 0.0, "seen_pos": 0},
+{"hex": "000007", "category": "A5", "lat": 10.0, "lon": 88.0, "alt_baro": 38000, "gs": 520.0, "track": 270.0, "seen_pos": 0},
+{"hex": "000008", "category": "A5", "lat": 20.0, "lon": 87.0, "alt_baro": 38000, "gs": 520.0, "track": 270.0, "seen_pos": 0},
+{"hex": "000009", "category": "A5", "lat": 30.0, "lon": 84.5, "alt_baro": 38000, "gs": 520.0, "track": 90.0, "seen_pos": 0}
+]}
