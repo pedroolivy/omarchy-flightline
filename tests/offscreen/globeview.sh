@@ -55,9 +55,9 @@ if [ "${1:-}" = drag ]; then
   done
   qml=$(pgrep -P "$(pgrep -P $pid | head -1)" | head -1)   # timeout -> env -> qml
   [ -n "$qml" ] || qml=$(pgrep -P $pid | head -1)
-  threads() { for t in /proc/$qml/task/*; do echo "$(tr " " _ < "$t/comm") $(cut -d' ' -f1 "$t/schedstat")"; done 2>/dev/null; }
+  threads() { for t in /proc/"$qml"/task/*; do echo "$(tr " " _ < "$t/comm") $(cut -d' ' -f1 "$t/schedstat")"; done 2>/dev/null; }
   # GPU time of this process from DRM fdinfo (ns on the gfx engine, per DRM client), as bench.sh
-  gpu() { for f in /proc/$qml/fdinfo/*; do awk '/drm-client-id/ {id = $2} /drm-engine-gfx/ {print id, $2}' "$f"; done 2>/dev/null | sort -u | awk '{s += $2} END {print s + 0}'; }
+  gpu() { for f in /proc/"$qml"/fdinfo/*; do awk '/drm-client-id/ {id = $2} /drm-engine-gfx/ {print id, $2}' "$f"; done 2>/dev/null | sort -u | awk '{s += $2} END {print s + 0}'; }
   f1=$(grep -c "bench fps" "$log"); a=$(threads); g1=$(gpu); t1=$(date +%s.%N)
   sleep $((secs - 3))
   f2=$(grep -c "bench fps" "$log"); b=$(threads); g2=$(gpu); t2=$(date +%s.%N)

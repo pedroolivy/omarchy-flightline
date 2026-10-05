@@ -23,6 +23,7 @@ mkdir -p "$OUT"
 
 fixtures=""
 pack() {  # pack <name> <raw.json>
+  # shellcheck disable=SC2046  # feed2ppm.py prints two numbers (count, epoch): split on purpose
   set -- "$1" "$2" $("$here/feed2ppm.py" "$2" "$OUT/$1.ppm")
   fixtures="$fixtures $1:$3:$4"
 }

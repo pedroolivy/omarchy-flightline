@@ -14,7 +14,7 @@ env QT_QUICK_BACKEND=rhi QSG_RHI_BACKEND=opengl QT_QPA_PLATFORM=offscreen QT_FOR
   timeout 25 /usr/lib/qt6/bin/qml "$here/globe-idle.qml" > "$log" 2>&1 &
 pid=$!
 vram() {  # KiB
-  for f in /proc/$qml/fdinfo/*; do awk '/drm-client-id/ {id = $2} /drm-total-vram/ {print id, $2}' "$f"; done 2>/dev/null |
+  for f in /proc/"$qml"/fdinfo/*; do awk '/drm-client-id/ {id = $2} /drm-total-vram/ {print id, $2}' "$f"; done 2>/dev/null |
     sort -u | awk '{s += $2} END {print s + 0}'
 }
 wait_for() {

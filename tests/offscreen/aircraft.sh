@@ -21,6 +21,7 @@ run() {  # run <test.qml> <args...>
     QT_FORCE_STDERR_LOGGING=1 /usr/lib/qt6/bin/qml "$here/$qml" -- "$OUT" "$@" 2>&1 | grep -v "^qt\.\|^  " || true
 }
 pack() {  # pack <name> <raw.json> -> name:count:epochMs
+  # shellcheck disable=SC2046  # feed2ppm.py prints two numbers (count, epoch): split on purpose
   set -- "$1" $(python3 "$here/feed2ppm.py" "$2" "$OUT/$1.ppm")
   echo "$1:$2:$3"
 }

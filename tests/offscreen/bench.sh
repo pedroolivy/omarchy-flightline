@@ -25,6 +25,7 @@ secs=${1:-8}
 [ "$secs" -le 10 ] || secs=10
 [ -n "${WORLD_JSON:-}" ] || { echo "set WORLD_JSON" >&2; exit 2; }
 mkdir -p "$OUT"
+# shellcheck disable=SC2046  # feed2ppm.py prints two numbers (count, epoch): split on purpose
 set -- $("$here/feed2ppm.py" "$WORLD_JSON" "$OUT/world.ppm")
 log=$OUT/bench.log
 env QT_QUICK_BACKEND=rhi QSG_RHI_BACKEND=opengl QT_QPA_PLATFORM=offscreen QT_FORCE_STDERR_LOGGING=1 QSG_INFO=1 \
@@ -38,9 +39,9 @@ while ! grep -q "bench fps" "$log" 2>/dev/null; do
   sleep 0.2
 done
 qml=$(pgrep -P $pid | head -1)                # timeout's child: the qml process
-threads() { for t in /proc/$qml/task/*; do echo "$(tr " " _ < "$t/comm") $(cut -d' ' -f1 "$t/schedstat")"; done 2>/dev/null; }
+threads() { for t in /proc/"$qml"/task/*; do echo "$(tr " " _ < "$t/comm") $(cut -d' ' -f1 "$t/schedstat")"; done 2>/dev/null; }
 # GPU time of this process from DRM fdinfo (ns on the gfx engine, per DRM client)
-gpu() { for f in /proc/$qml/fdinfo/*; do awk '/drm-client-id/ {id = $2} /drm-engine-gfx/ {print id, $2}' "$f"; done 2>/dev/null | sort -u | awk '{s += $2} END {print s + 0}'; }
+gpu() { for f in /proc/"$qml"/fdinfo/*; do awk '/drm-client-id/ {id = $2} /drm-engine-gfx/ {print id, $2}' "$f"; done 2>/dev/null | sort -u | awk '{s += $2} END {print s + 0}'; }
 f1=$(grep -c "bench fps" "$log"); a=$(threads); g1=$(gpu); t1=$(date +%s.%N)
 sleep $((secs - 2))
 f2=$(grep -c "bench fps" "$log"); b=$(threads); g2=$(gpu); t2=$(date +%s.%N)

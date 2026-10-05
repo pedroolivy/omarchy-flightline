@@ -23,6 +23,7 @@ h=${4:-1440}
 nm=${5:-0}
 [ -n "${WORLD_JSON:-}" ] || { echo "set WORLD_JSON" >&2; exit 2; }
 mkdir -p "$OUT"
+# shellcheck disable=SC2046  # feed2ppm.py prints two numbers (count, epoch): split on purpose
 set -- $(PYTHONDONTWRITEBYTECODE=1 python3 "$here/feed2ppm.py" "$WORLD_JSON" "$OUT/world.ppm")
 log=$OUT/aircraft-bench-$layers-$nm.log
 env QT_QUICK_BACKEND=rhi QSG_RHI_BACKEND=opengl QT_QPA_PLATFORM=offscreen QT_FORCE_STDERR_LOGGING=1 \
@@ -36,7 +37,7 @@ while ! grep -q "bench fps" "$log" 2>/dev/null; do
 done
 qml=$(pgrep -P $pid | head -1)                # timeout's child: the qml process
 cpu() { awk '{print $14 + $15}' "/proc/$qml/stat"; }
-gpu() { for f in /proc/$qml/fdinfo/*; do awk '/drm-client-id/ {id = $2} /drm-engine-gfx/ {print id, $2}' "$f"; done 2>/dev/null | sort -u | awk '{s += $2} END {print s + 0}'; }
+gpu() { for f in /proc/"$qml"/fdinfo/*; do awk '/drm-client-id/ {id = $2} /drm-engine-gfx/ {print id, $2}' "$f"; done 2>/dev/null | sort -u | awk '{s += $2} END {print s + 0}'; }
 f1=$(grep -c "bench fps" "$log"); c1=$(cpu); g1=$(gpu); t1=$(date +%s.%N)
 sleep $((secs - 2))
 f2=$(grep -c "bench fps" "$log"); c2=$(cpu); g2=$(gpu); t2=$(date +%s.%N)
