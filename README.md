@@ -1,5 +1,7 @@
 # Flightline
 
+[![CI](https://github.com/pedroolivy/omarchy-flightline/actions/workflows/ci.yml/badge.svg)](https://github.com/pedroolivy/omarchy-flightline/actions/workflows/ci.yml)
+
 ![Flightline: live air traffic on a GPU globe](preview.webp)
 
 The whole world's air traffic on a GPU globe, right in the Omarchy bar.
@@ -98,9 +100,13 @@ How it works, file formats and performance budgets:
 
 ```bash
 node tests/model.test.mjs && node tests/sky.test.mjs
-FLIGHTLINE_FIXTURES=dir python3 tests/feed/test_feed.py   # dir: saved feed answers
-WORLD_JSON=world.json tests/offscreen/run.sh               # GPU renders, offscreen
+python3 -m unittest discover -s tests/feed       # FLIGHTLINE_FIXTURES=dir adds saved real answers
+python3 -m unittest discover -s tests/repo       # manifest, shaders, assets, shipped files
+WORLD_JSON=world.json tests/offscreen/run.sh     # GPU renders, offscreen
 ```
+
+CI runs all of these on every push, the renders on Arch Linux's Qt with Mesa's
+software renderer.
 
 ## Credits
 
