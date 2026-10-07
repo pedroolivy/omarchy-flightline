@@ -75,7 +75,11 @@ BarWidget {
     return null
   }
 
-  readonly property string label: "󰀝" + (alert ? " " + (alert.row.sq || "SOS") : (count > 0 ? " " + count : ""))
+  // Same look as Omarchy's own bar icons: one icon slot for the plane, a second
+  // one (a third for a long squawk) while it carries a count or an emergency.
+  readonly property string planeIcon: "󰀝"
+  readonly property string badge: alert ? (alert.row.sq || "SOS") : (count > 0 ? String(count) : "")
+  readonly property string label: planeIcon + (badge !== "" ? " " + badge : "")
 
   function routeText(cs) {
     var r = cs && service && service.routes.hasOwnProperty(cs) ? service.routes[cs] : null
@@ -120,13 +124,12 @@ BarWidget {
     }
   }
 
-  WidgetButton {
+  BarIconButton {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: root.label
-    fontSize: Style.font.caption
-    horizontalMargin: 6
+    text: root.vertical || root.badge === "" ? root.planeIcon : root.label
+    slotSize: Style.bar.iconSlot * (root.vertical || root.badge === "" ? 1 : (root.badge.length <= 3 ? 2 : 3))
     active: root.alert !== null
     tooltipText: root.opened ? "" : root.tooltip
     onPressed: function(b) {
