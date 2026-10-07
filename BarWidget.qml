@@ -6,7 +6,8 @@ import "Model.js" as Model
 // Bar pill: a plane and how many aircraft are in the air within the overhead
 // radius of your location. Click opens the globe, middle click the Look up
 // lens, right click refreshes. The text changes at most once per feed update
-// and never on a timer of its own.
+// and never on a timer of its own. The plane keeps the colour of the other bar
+// icons; only an emergency squawk overhead switches it to the alert colour.
 BarWidget {
   id: root
   moduleName: "io.github.pedroolivy.flightline"
@@ -74,7 +75,11 @@ BarWidget {
     return null
   }
 
-  readonly property string label: "󰀝" + (alert ? " " + (alert.row.sq || "SOS") : (count > 0 ? " " + count : ""))
+  // Same look as Omarchy's own bar icons: one icon slot for the plane, a second
+  // one (a third for a long squawk) while it carries a count or an emergency.
+  readonly property string planeIcon: "󰀝"
+  readonly property string badge: alert ? (alert.row.sq || "SOS") : (count > 0 ? String(count) : "")
+  readonly property string label: planeIcon + (badge !== "" ? " " + badge : "")
 
   function routeText(cs) {
     var r = cs && service && service.routes.hasOwnProperty(cs) ? service.routes[cs] : null
@@ -119,15 +124,13 @@ BarWidget {
     }
   }
 
-  WidgetButton {
+  BarIconButton {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: root.label
-    fontSize: Style.font.caption
-    horizontalMargin: 6
+    text: root.vertical || root.badge === "" ? root.planeIcon : root.label
+    slotSize: Style.bar.iconSlot * (root.vertical || root.badge === "" ? 1 : (root.badge.length <= 3 ? 2 : 3))
     active: root.alert !== null
-    dimmed: root.alert === null && (root.count <= 0 || root.stale)
     tooltipText: root.opened ? "" : root.tooltip
     onPressed: function(b) {
       if (b === Qt.RightButton) { if (root.service) root.service.refresh() }

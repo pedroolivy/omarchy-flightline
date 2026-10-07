@@ -216,7 +216,7 @@ panel reported itself open through `setPanelOpen`), `status` (idle|loading|ok|er
 URL of traffic.ppm), `trafficRev` (int, bumps when a new PPM is in place),
 `trafficCount`, `epochMs`, `maxGs`, `summary` (last summary object),
 `nearbyCount` (-1 unknown), `nearbyMs` (when nearbyCount was last true; the
-bar dims a count older than 5 min), `nearest` (array from summary.home.nearest),
+bar tooltip dates a count older than 5 min), `nearest` (array from summary.home.nearest),
 `nearestAny` (summary.home.nearestAny of the last answer, `[]` unless its
 home circle was empty),
 `airborneCount`, `worldCount` (airborne total of the last world fetch, -1 if
