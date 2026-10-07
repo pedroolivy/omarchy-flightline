@@ -1,6 +1,12 @@
 # Flightline
 
 [![CI](https://github.com/pedroolivy/omarchy-flightline/actions/workflows/ci.yml/badge.svg)](https://github.com/pedroolivy/omarchy-flightline/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/pedroolivy/omarchy-flightline)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/pedroolivy/omarchy-flightline)](https://github.com/pedroolivy/omarchy-flightline/releases/latest)
+[![Omarchy 4](https://img.shields.io/badge/Omarchy-4-7aa2f7)](https://omarchy.org)
+[![Omarchy marketplace](https://img.shields.io/badge/Omarchy_marketplace-listed-9ece6a)](https://plugins.omarchy.org/plugin.html?id=io.github.pedroolivy.flightline)
+[![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)](https://www.python.org)
+[![Conventional Commits](https://img.shields.io/badge/Conventional_Commits-1.0.0-fe5196?logo=conventionalcommits&logoColor=white)](https://www.conventionalcommits.org)
 
 ![Flightline: live air traffic on a GPU globe](preview.webp)
 
