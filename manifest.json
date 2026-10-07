@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.pedroolivy.flightline",
   "name": "Flightline",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "author": "Pedro S. Oliveira",
   "license": "MIT",
   "description": "The whole world's air traffic on a GPU globe that follows your Omarchy theme: shaded relief, sea-floor depth, sunlight and trails. Counts the aircraft over your weather location, follows any flight with its route and ETA, and shows what is in your sky, Sun, Moon and planets included.",
